@@ -129,9 +129,104 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 //   - object_write    : save that binary buffer to the store as OBJ_TREE
 //
 // Returns 0 on success, -1 on error.
-int tree_from_index(ObjectID *id_out) {
-    // TODO: Implement recursive tree building
-    // (See Lab Appendix for logical steps)
-    (void)id_out;
-    return -1;
+int tree_parse(const void *data, size_t len, Tree *tree_out) {
+    tree_out->count = 0;
+
+    size_t i = 0;
+    while (i < len) {
+        TreeEntry *e = &tree_out->entries[tree_out->count];
+
+        // parse mode
+        int mode_len = 0;
+        while (data[i + mode_len] != ' ') mode_len++;
+
+        memcpy(e->mode, (char*)data + i, mode_len);
+        e->mode[mode_len] = '\0';
+
+        i += mode_len + 1;
+
+        // parse name
+        int name_len = strlen((char*)data + i);
+        memcpy(e->name, (char*)data + i, name_len + 1);
+
+        i += name_len + 1;
+
+        // read hash (32 bytes)
+        memcpy(e->id.hash, (char*)data + i, HASH_SIZE);
+
+        i += HASH_SIZE;
+
+        tree_out->count++;
+    }
+
+    return 0;
+}
+
+int cmp_tree(const void *a, const void *b) {
+    return strcmp(((TreeEntry*)a)->name, ((TreeEntry*)b)->name);
+}
+
+int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
+    Tree temp = *tree;
+
+    qsort(temp.entries, temp.count, sizeof(TreeEntry), cmp_tree);
+
+    size_t total = 0;
+
+    for (int i = 0; i < temp.count; i++) {
+        total += strlen(temp.entries[i].mode) + 1;
+        total += strlen(temp.entries[i].name) + 1;
+        total += HASH_SIZE;
+    }
+
+    char *buf = malloc(total);
+    size_t offset = 0;
+
+    for (int i = 0; i < temp.count; i++) {
+        TreeEntry *e = &temp.entries[i];
+
+        int mlen = strlen(e->mode);
+        memcpy(buf + offset, e->mode, mlen);
+        offset += mlen;
+
+        buf[offset++] = ' ';
+
+        int nlen = strlen(e->name);
+        memcpy(buf + offset, e->name, nlen);
+        offset += nlen;
+
+        buf[offset++] = '\0';
+
+        memcpy(buf + offset, e->id.hash, HASH_SIZE);
+        offset += HASH_SIZE;
+    }
+
+    *data_out = buf;
+    *len_out = total;
+
+    return 0;
+}
+
+int tree_from_index(const Index *index, ObjectID *root_id_out) {
+    Tree tree;
+    tree.count = 0;
+
+    for (int i = 0; i < index->count; i++) {
+        TreeEntry *e = &tree.entries[tree.count++];
+
+        strcpy(e->mode, "100644");
+        strcpy(e->name, index->entries[i].path);
+        e->id = index->entries[i].hash;
+    }
+
+    void *data;
+    size_t len;
+
+    tree_serialize(&tree, &data, &len);
+
+    object_write(OBJ_TREE, data, len, root_id_out);
+
+    free(data);
+
+    return 0;
 }
