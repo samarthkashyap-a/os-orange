@@ -72,8 +72,15 @@ void cmd_commit(int argc, char *argv[]) {
     }
 
     const char *message = argv[3];
+
+    Index index;
+    if (index_load(&index) != 0) {
+        fprintf(stderr, "error: failed to load index\n");
+        return;
+    }
+
     ObjectID commit_id;
-    if (commit_create(message, &commit_id) != 0) {
+    if (commit_create(&index, message, &commit_id) != 0) {
         fprintf(stderr, "error: commit failed\n");
         return;
     }
