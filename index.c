@@ -134,42 +134,106 @@ int index_status(const Index *index) {
 //   - hex_to_hash                      : converting the parsed string to ObjectID
 //
 // Returns 0 on success, -1 on error.
+
 int index_load(Index *index) {
-    // TODO: Implement index loading
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    index->count = 0;
+
+    FILE *f = fopen(".pes/index", "r");
+    if (!f) return 0;
+
+    while (index->count < MAX_INDEX_ENTRIES) {
+        IndexEntry *e = &index->entries[index->count];
+
+        char hex[65];
+
+        int ret = fscanf(f, "%o %64s %ld %u %[^\n]\n",
+                         &e->mode,
+                         hex,
+                         &e->mtime_sec,
+                         &e->size,
+                         e->path);
+
+        if (ret != 5) break;
+
+        hex_to_hash(hex, &e->hash);
+
+        index->count++;
+    }
+
+    fclose(f);
+    return 0;
 }
 
-// Save the index to .pes/index atomically.
-//
-// HINTS - Useful functions and syscalls:
-//   - qsort                            : sorting the entries array by path
-//   - fopen (with "w"), fprintf        : writing to the temporary file
-//   - hash_to_hex                      : converting ObjectID for text output
-//   - fflush, fileno, fsync, fclose    : flushing userspace buffers and syncing to disk
-//   - rename                           : atomically moving the temp file over the old index
-//
-// Returns 0 on success, -1 on error.
+int cmp_entries(const void *a, const void *b) {
+    return strcmp(((IndexEntry*)a)->path, ((IndexEntry*)b)->path);
+}
+
 int index_save(const Index *index) {
-    // TODO: Implement atomic index saving
-    // (See Lab Appendix for logical steps)
-    (void)index;
-    return -1;
+    IndexEntry temp[MAX_INDEX_ENTRIES];
+    memcpy(temp, index->entries, sizeof(IndexEntry) * index->count);
+
+    qsort(temp, index->count, sizeof(IndexEntry), cmp_entries);
+
+    FILE *f = fopen(".pes/index.tmp", "w");
+    if (!f) return -1;
+
+    for (int i = 0; i < index->count; i++) {
+        char hex[65];
+        hash_to_hex(&temp[i].hash, hex);
+
+        fprintf(f, "%o %s %ld %u %s\n",
+                temp[i].mode,
+                hex,
+                temp[i].mtime_sec,
+                temp[i].size,
+                temp[i].path);
+    }
+
+    fflush(f);
+    fsync(fileno(f));
+    fclose(f);
+
+    rename(".pes/index.tmp", ".pes/index");
+
+    return 0;
 }
 
-// Stage a file for the next commit.
-//
-// HINTS - Useful functions and syscalls:
-//   - fopen, fread, fclose             : reading the target file's contents
-//   - object_write                     : saving the contents as OBJ_BLOB
-//   - stat / lstat                     : getting file metadata (size, mtime, mode)
-//   - index_find                       : checking if the file is already staged
-//
-// Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
-    (void)index; (void)path;
-    return -1;
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    fseek(f, 0, SEEK_END);
+    uint32_t size = ftell(f);
+    rewind(f);
+
+    void *data = malloc(size);
+    fread(data, 1, size, f);
+    fclose(f);
+
+    ObjectID id;
+    object_write(OBJ_BLOB, data, size, &id);
+    free(data);
+
+    struct stat st;
+    stat(path, &st);
+
+    IndexEntry *e = index_find(index, path);
+
+    if (e) {
+        e->hash = id;
+        e->mtime_sec = st.st_mtime;
+        e->size = size;
+        e->mode = st.st_mode;
+    } else {
+        IndexEntry *ne = &index->entries[index->count++];
+
+        ne->hash = id;
+        ne->mtime_sec = st.st_mtime;
+        ne->size = size;
+        ne->mode = st.st_mode;
+
+        strcpy(ne->path, path);
+    }
+
+    return index_save(index);
 }
